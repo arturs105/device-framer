@@ -24,7 +24,8 @@ examples:
   device-framer frames remove iphone-17-pro --yes
 
 workflow:
-  1. `frames discover` lists Apple bezel DMGs you have not added yet.
+  1. `frames discover` lists Apple bezel DMGs you have not added yet and, on a
+     terminal, lets you tick the ones to install right away.
   2. `frames add <name|url>` downloads one, lets you pick the PNG variants to
      keep, copies them into frames/<device>/<color>-<orientation>.png and
      records the choice (plus detected screen geometry) in devices.json.

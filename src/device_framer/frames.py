@@ -138,6 +138,20 @@ def discover_bezels() -> list[Bezel]:
     return [Bezel(display_name_from_url(u), u) for u in bezel_urls(html)]
 
 
+def pick_bezels(missing: list[Bezel]) -> list[Bezel]:
+    """Checkbox picker over the bezels not yet in the manifest. Only called on a terminal."""
+    try:
+        import questionary
+
+        choices = [questionary.Choice(b.name, value=b) for b in missing]
+        picked = questionary.checkbox("Select the bezels to install (space to toggle, enter to confirm):", choices=choices).ask()
+    except Exception as exc:
+        raise CliError(f'picker failed ({exc}); run `{PROG} frames add "<name>"` instead.') from exc
+    if picked is None:
+        raise CliError("cancelled")
+    return list(picked)
+
+
 def cmd_discover(args: argparse.Namespace, store: Store) -> int:
     url = resources_url()
     print(f"Source: {url}")
@@ -155,7 +169,18 @@ def cmd_discover(args: argparse.Namespace, store: Store) -> int:
     width = max(len(b.name) for b in missing)
     for b in missing:
         print(f"  {b.name:<{width}}  {b.url}")
-    print(f'\nAdd one with: {PROG} frames add "<name>"')
+    if args.list or not is_interactive():
+        print(f'\nAdd one with: {PROG} frames add "<name>"')
+        return 0
+
+    print()
+    picked = pick_bezels(missing)
+    if not picked:
+        print("Nothing selected.")
+        return 0
+    for b in picked:
+        print(f"\n== {b.name} ==")
+        add_from_source(store, b.url, variant_names=None, select_all=args.all)
     return 0
 
 
@@ -227,7 +252,11 @@ def install_variant(store: Store, cand: Candidate) -> Variant:
 
 
 def cmd_add(args: argparse.Namespace, store: Store) -> int:
-    source = resolve_dmg_source(args.source)
+    return add_from_source(store, resolve_dmg_source(args.source), args.variants, args.all)
+
+
+def add_from_source(store: Store, source: str, variant_names: str | None, select_all: bool) -> int:
+    """Download ``source`` (a resolved URL or local path), pick variants, install them and save the manifest."""
     preselected = {v.raw for d in store.devices.values() if d.dmg_url == source for v in d.variants}
     with tempfile.TemporaryDirectory(prefix="device-framer-") as tmp:
         dmg = download(source, Path(tmp))
@@ -235,7 +264,7 @@ def cmd_add(args: argparse.Namespace, store: Store) -> int:
             candidates = mounted.candidates()
             if not candidates:
                 raise CliError(f"no PNG files found inside {dmg.name}")
-            chosen = select_candidates(candidates, args.variants, args.all, preselected)
+            chosen = select_candidates(candidates, variant_names, select_all, preselected)
             if not chosen:
                 raise CliError("nothing selected")
 
@@ -357,9 +386,15 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser(
         "discover",
         help="list Apple bezel DMGs that are not in the manifest yet",
-        description="Fetch Apple's design resources page and list bezel DMGs not yet in devices.json.",
+        description=(
+            "Fetch Apple's design resources page and list bezel DMGs not yet in devices.json. "
+            "On a terminal, a checkbox picker then lets you install the ones you choose "
+            "(each opens the same variant picker as `frames add`)."
+        ),
         parents=common,
     )
+    d.add_argument("--list", action="store_true", help="only print the list; never open the picker")
+    d.add_argument("--all", action="store_true", help="keep every PNG of each picked bezel instead of asking per variant")
     d.set_defaults(func=cmd_discover)
 
     a = sub.add_parser(

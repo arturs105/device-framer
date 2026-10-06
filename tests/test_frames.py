@@ -202,3 +202,105 @@ def test_add_with_unknown_name_fails_without_guessing(root, apple_page):
     res = run_cli(root, "frames", "add", "Nokia 3310", "--all")
     assert res.code == 1
     assert "frames discover" in res.err and "Bezel-" in res.err
+
+
+# --------------------------------------------------------------------------- #
+# discover's interactive picker
+# --------------------------------------------------------------------------- #
+
+
+class _FakeQuestionary:
+    """Stand-in for questionary: answers each checkbox() call from a queue of pick-functions."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.prompts: list[str] = []
+
+    class Choice:
+        def __init__(self, title, value=None, checked=False):
+            self.title, self.value, self.checked = title, value, checked
+
+    def checkbox(self, message, choices):
+        self.prompts.append(message)
+        pick = self.answers.pop(0)
+        fake = self
+
+        class _Q:
+            def ask(self):
+                return pick([c.value for c in choices])
+
+        return _Q()
+
+
+def _install_fake_questionary(monkeypatch, fake):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "questionary", fake)
+    monkeypatch.setattr("device_framer.frames.is_interactive", lambda: True)
+
+
+def test_discover_without_tty_only_lists(root, apple_page):
+    res = run_cli(root, "frames", "discover")
+    assert res.code == 0
+    assert "frames add" in res.out
+    assert "Select the bezels" not in res.out
+
+
+def test_discover_list_flag_skips_picker_on_a_tty(root, apple_page, monkeypatch):
+    fake = _FakeQuestionary()
+    _install_fake_questionary(monkeypatch, fake)
+    res = run_cli(root, "frames", "discover", "--list")
+    assert res.code == 0
+    assert fake.prompts == []
+    assert "frames add" in res.out
+
+
+def test_discover_picker_nothing_selected(root, apple_page, monkeypatch):
+    fake = _FakeQuestionary(lambda bezels: [])
+    _install_fake_questionary(monkeypatch, fake)
+    res = run_cli(root, "frames", "discover")
+    assert res.code == 0
+    assert "Nothing selected" in res.out
+
+
+def test_discover_picker_cancelled(root, apple_page, monkeypatch):
+    fake = _FakeQuestionary(lambda bezels: None)
+    _install_fake_questionary(monkeypatch, fake)
+    res = run_cli(root, "frames", "discover")
+    assert res.code == 1
+    assert "cancelled" in res.err
+
+
+@requires_hdiutil
+def test_discover_picker_installs_selected_bezel_variants(root, dmg, tmp_path, monkeypatch):
+    page = tmp_path / "page.html"
+    page.write_text(f'<a href="{dmg.as_uri()}">x</a>')
+    monkeypatch.setenv("DEVICE_FRAMER_RESOURCES_URL", page.as_uri())
+    fake = _FakeQuestionary(
+        lambda bezels: bezels,  # tick the only bezel
+        lambda cands: [c for c in cands if c.raw == "iPhone 17 - Black - Portrait.png"],
+    )
+    _install_fake_questionary(monkeypatch, fake)
+    res = run_cli(root, "frames", "discover")
+    assert res.code == 0, res.err
+    assert len(fake.prompts) == 2
+    assert "bezels" in fake.prompts[0] and "variants" in fake.prompts[1]
+    assert (root / "frames" / "iphone-17" / "black-portrait.png").exists()
+    assert not (root / "frames" / "iphone-17-pro").exists()
+    manifest = json.loads((root / "devices.json").read_text())
+    assert list(manifest) == ["iphone-17"]
+
+
+@requires_hdiutil
+def test_discover_picker_with_all_skips_variant_picker(root, dmg, tmp_path, monkeypatch):
+    page = tmp_path / "page.html"
+    page.write_text(f'<a href="{dmg.as_uri()}">x</a>')
+    monkeypatch.setenv("DEVICE_FRAMER_RESOURCES_URL", page.as_uri())
+    fake = _FakeQuestionary(lambda bezels: bezels)
+    _install_fake_questionary(monkeypatch, fake)
+    res = run_cli(root, "frames", "discover", "--all")
+    assert res.code == 0, res.err
+    assert len(fake.prompts) == 1
+    manifest = json.loads((root / "devices.json").read_text())
+    assert set(manifest) == {"iphone-17", "iphone-17-pro"}
+    assert len(manifest["iphone-17-pro"]["variants"]) == 3
