@@ -1,0 +1,20 @@
+{
+  "iphone-18-pro": {
+    "name": "iPhone 18 Pro",
+    "dmg_url": "https://devimages-cdn.apple.com/design/resources/download/Bezel-iPhone-18.dmg",
+    "variants": [
+      {
+        "raw": "iPhone 18 Pro - Silver - Portrait.png",
+        "color": "silver",
+        "orientation": "portrait",
+        "path": "iphone-18-pro/silver-portrait.png",
+        "screen": {
+          "x": 72,
+          "y": 69,
+          "width": 1206,
+          "height": 2622
+        }
+      }
+    ]
+  }
+}
